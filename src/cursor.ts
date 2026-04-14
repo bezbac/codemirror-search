@@ -3,6 +3,14 @@ import {Text, TextIterator, codePointAt, codePointSize, fromCodePoint} from "@co
 const basicNormalize: (string: string) => string = typeof String.prototype.normalize == "function"
   ? x => x.normalize("NFKD") : x => x
 
+const extendingChar = (() => {
+  try {
+    return new RegExp("^\\p{M}", "u")
+  } catch {
+    return null
+  }
+})()
+
 /// A search cursor provides an iterator over text matches in a
 /// document.
 export class SearchCursor implements Iterator<{from: number, to: number}>{
@@ -14,6 +22,9 @@ export class SearchCursor implements Iterator<{from: number, to: number}>{
   /// Whether the end of the iterated region has been reached.
   done = false
   private matches: number[] = []
+  // Matches may complete before the end of a normalized expansion,
+  // such as a query for "セン" matching inside "㌢" -> "センチ".
+  private pending: {from: number, to: number}[] = []
   private buffer = ""
   private bufferPos = 0
   private bufferStart: number
@@ -58,6 +69,7 @@ export class SearchCursor implements Iterator<{from: number, to: number}>{
   /// at least once before using the cursor.
   next() {
     while (this.matches.length) this.matches.pop()
+    while (this.pending.length) this.pending.pop()
     return this.nextOverlapping()
   }
 
@@ -65,6 +77,10 @@ export class SearchCursor implements Iterator<{from: number, to: number}>{
   /// previous match. This method behaves like `next`, but includes
   /// such matches.
   nextOverlapping() {
+    if (this.pending.length) {
+      this.value = this.pending.shift()!
+      return this
+    }
     for (;;) {
       let next = this.peek()
       if (next < 0) {
@@ -77,16 +93,27 @@ export class SearchCursor implements Iterator<{from: number, to: number}>{
       if (norm.length) for (let i = 0, pos = start;; i++) {
         let code = norm.charCodeAt(i)
         let match = this.match(code, pos, this.bufferPos + this.bufferStart)
-        if (i == norm.length - 1) {
-          if (match) {
-            this.value = match
-            return this
-          }
-          break
+        if (match && this.endsAtNormalizationBoundary(norm, i + 1)) {
+          // Avoid returning the same source range twice from one expansion.
+          let last = this.pending[this.pending.length - 1]
+          if (!last || last.from != match.from || last.to != match.to) this.pending.push(match)
         }
+        if (i == norm.length - 1) break
         if (pos == start && i < str.length && str.charCodeAt(i) == code) pos++
       }
+      if (this.pending.length) {
+        this.value = this.pending.shift()!
+        return this
+      }
     }
+  }
+
+  private endsAtNormalizationBoundary(norm: string, index: number) {
+    if (index >= norm.length) return true
+    let next = norm.charCodeAt(index)
+    // Don't stop inside a surrogate pair or before trailing combining marks.
+    return (next < 0xdc00 || next > 0xdfff) &&
+      !(extendingChar && extendingChar.test(fromCodePoint(codePointAt(norm, index))))
   }
 
   private match(code: number, pos: number, end: number) {
