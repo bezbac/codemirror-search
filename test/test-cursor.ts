@@ -72,6 +72,26 @@ describe("SearchCursor", () => {
   it("can handle normalizers that remove text", () => {
     testMatches(new SearchCursor(Text.of(["hello"]), "halal", 0, 5, s => s.replace(/[aeuoi]/g, "")), [[0, 4]])
   })
+
+  it("matches full compatibility-character expansions", () => {
+    // [5, 6] is the single source character "㌢", normalized to "センチ".
+    testMatches(new SearchCursor(Text.of(["高さ180㌢の棚"]), "センチ"), [[5, 6]])
+  })
+
+  it("matches prefixes inside compatibility-character expansions", () => {
+    // [5, 6] is the single source character "㌢", normalized to "センチ".
+    testMatches(new SearchCursor(Text.of(["高さ180㌢の棚"]), "セン"), [[5, 6]])
+  })
+
+  it("matches suffixes inside compatibility-character expansions", () => {
+    // [5, 6] is the single source character "㌢", normalized to "センチ".
+    testMatches(new SearchCursor(Text.of(["高さ180㌢の棚"]), "ンチ"), [[5, 6]])
+  })
+
+  it("matches across compatibility-character expansion boundaries", () => {
+    // [5, 7] covers the source characters "㌢㍍", normalized to "センチメートル".
+    testMatches(new SearchCursor(Text.of(["高さ180㌢㍍の棚"]), "チメ"), [[5, 7]])
+  })
 })
 
 describe("RegExpCursor", () => {
